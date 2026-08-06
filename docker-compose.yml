@@ -1,0 +1,77 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./tgappback
+    restart: unless-stopped
+    env_file: ./tgappback/.env
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+    volumes:
+      - uploads-data:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  frontend:
+    build: ./tgappfront
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - certbot-webroot:/var/www/certbot
+      - certbot-conf:/etc/letsencrypt
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  certbot:
+    image: certbot/certbot
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - certbot-webroot:/var/www/certbot
+      - certbot-conf:/etc/letsencrypt
+      - certbot-lib:/var/lib/letsencrypt
+    entrypoint: >
+      /bin/sh -c '
+      trap exit TERM INT;
+      if [ ! -f "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" ]; then
+        certbot certonly --webroot -w /var/www/certbot -d ${DOMAIN}
+          --email ${LETSENCRYPT_EMAIL} --agree-tos --no-eff-email --non-interactive;
+      fi;
+      while :; do
+        certbot renew --webroot -w /var/www/certbot > /dev/null;
+        sleep 12h & wait $${!};
+      done'
+
+volumes:
+  pgdata:
+  uploads-data:
+  certbot-webroot:
+  certbot-conf:
+  certbot-lib:

@@ -1,0 +1,15 @@
+fastapi==0.139.0
+uvicorn==0.50.0
+SQLAlchemy==2.0.51
+asyncpg==0.31.0
+pydantic==2.13.4
+python-dotenv==1.2.2
+python-socketio==5.16.3
+slowapi==0.1.10
+PyJWT==2.13.0
+bcrypt==5.0.0
+openpyxl==3.1.5
+httpx==0.28.1
+google-auth==2.56.2
+requests==2.34.2
+python-multipart==0.0.32

@@ -1,0 +1,7 @@
+# HTTP-режим без HTTPS (для запуска на голом IP VPS, пока нет домена).
+# Использовать так: docker compose -f docker-compose.yml -f docker-compose.http.yml up -d --scale certbot=0
+# Когда домен будет готов: docker compose up -d (без этого файла)
+services:
+  frontend:
+    volumes:
+      - ./tgappfront/nginx.http.conf.template:/etc/nginx/templates/default.conf.template:ro

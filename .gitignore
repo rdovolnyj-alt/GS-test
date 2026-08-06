@@ -1,0 +1,19 @@
+# macOS
+.DS_Store
+
+# Python (tgappback)
+.venv/
+__pycache__/
+*.py[cod]
+
+# Node (tgappfront)
+node_modules/
+dist/
+
+# Секреты и локальная конфигурация
+.env
+.env.local
+
+# Runtime-данные
+uploads/
+dbGSTORE

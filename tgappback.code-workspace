@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"path": "tgappback"
+		},
+		{
+			"path": "tgappfront"
+		}
+	],
+	"settings": {
+		"liveServer.settings.multiRootWorkspaceName": "tgappback"
+	}
+}

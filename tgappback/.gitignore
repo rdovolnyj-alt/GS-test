@@ -1,0 +1,14 @@
+# Локальное окружение и кэши
+.venv/
+__pycache__/
+*.py[cod]
+
+# Секреты и конфигурация
+.env
+
+# Runtime-данные
+uploads/
+dbGSTORE
+
+# Мусор macOS
+.DS_Store
