@@ -8,7 +8,7 @@ export class ApiError extends Error {
   }
 }
 
-function getAuthHeaders(): Record<string, string> {
+export function getAuthHeaders(): Record<string, string> {
   const token = localStorage.getItem("auth_token");
   if (token) {
     return { Authorization: `Bearer ${token}` };

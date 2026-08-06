@@ -1,5 +1,5 @@
 import type { ApiProduct, Category } from "../types/product";
-import { api } from "./client";
+import { api, getAuthHeaders } from "./client";
 
 type ImageInput = { image_url: string; is_main: boolean };
 
@@ -92,7 +92,7 @@ export type ExcelSheet = {
 export async function previewExcelSheets(file: File): Promise<{ sheets: ExcelSheet[] }> {
   const formData = new FormData();
   formData.append("file", file);
-  const res = await fetch("/api/products/excel-preview", { method: "POST", body: formData });
+  const res = await fetch("/api/products/excel-preview", { method: "POST", headers: getAuthHeaders(), body: formData });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(text || res.statusText);
@@ -104,7 +104,7 @@ export async function importProductsExcel(file: File, sheets: string[]): Promise
   const formData = new FormData();
   formData.append("file", file);
   formData.append("sheets", sheets.join(","));
-  const res = await fetch("/api/products/import-excel", { method: "POST", body: formData });
+  const res = await fetch("/api/products/import-excel", { method: "POST", headers: getAuthHeaders(), body: formData });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(text || res.statusText);
