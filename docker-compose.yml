@@ -61,12 +61,11 @@ services:
       /bin/sh -c '
       trap exit TERM INT;
       if [ ! -f "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" ]; then
-        certbot certonly --webroot -w /var/www/certbot -d ${DOMAIN}
-          --email ${LETSENCRYPT_EMAIL} --agree-tos --no-eff-email --non-interactive;
+      certbot certonly --webroot -w /var/www/certbot -d ${DOMAIN} --email ${LETSENCRYPT_EMAIL} --agree-tos --no-eff-email --non-interactive;
       fi;
       while :; do
-        certbot renew --webroot -w /var/www/certbot > /dev/null;
-        sleep 12h & wait $${!};
+      certbot renew --webroot -w /var/www/certbot > /dev/null;
+      sleep 12h & wait $${!};
       done'
 
 volumes:

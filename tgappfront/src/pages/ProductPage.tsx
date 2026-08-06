@@ -611,7 +611,7 @@ export function ProductPage({ variants, onAddToCart, onFlyProgress, onFlyComplet
             <div className="mt-4 mb-4 flex justify-center">
               <div
                 className="flex max-w-full items-center gap-2 overflow-x-auto px-4 pb-1 [&::-webkit-scrollbar]:hidden"
-                style={{ scrollbarWidth: "none", WebkitOverflowScrolling: "touch" }}
+                style={{ scrollbarWidth: "none", WebkitOverflowScrolling: "touch", touchAction: "pan-x", overscrollBehaviorX: "contain" }}
               >
                 {[...sideKeys]
                   .sort((a, b) => (selected[b] !== undefined ? 1 : 0) - (selected[a] !== undefined ? 1 : 0))
@@ -850,7 +850,7 @@ function ColorScrollRow({ children }: { children: ReactNode }) {
       onMouseLeave={handleMouseUp}
       onClickCapture={handleClickCapture}
       className="relative overflow-x-auto px-4 pt-1 pb-10 -mb-10 select-none [&::-webkit-scrollbar]:hidden"
-      style={{ scrollbarWidth: "none", WebkitOverflowScrolling: "touch", cursor: "grab" }}
+      style={{ scrollbarWidth: "none", WebkitOverflowScrolling: "touch", cursor: "grab", touchAction: "pan-x", overscrollBehaviorX: "contain" }}
     >
       <div className="flex items-center gap-3" style={{ width: "max-content", margin: "0 auto" }}>
         {children}
