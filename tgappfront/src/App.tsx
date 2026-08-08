@@ -20,10 +20,9 @@ import { hasPendingTradeInConfirm } from "./utils/tradeIn";
 import { OrderSuccessPage } from "./pages/OrderSuccessPage";
 import { MyOrdersPage } from "./pages/MyOrdersPage";
 import { useAuth } from "./context/useAuth";
-import { updateProfile, login as apiLogin, register as apiRegister, mergeCart, telegramAuth, vkAuth, googleAuth as apiGoogleAuth, telegramBrowserAuth, vkCodeAuth } from "./api/auth";
+import { updateProfile, login as apiLogin, register as apiRegister, mergeCart } from "./api/auth";
 import { SetPasswordModal } from "./components/SetPasswordModal";
 import { connectWs, disconnectWs, onWsEvent } from "./api/socket";
-import { detectPlatform, getTelegramInitData, getVKParams } from "./utils/platform";
 import { AuthModal } from "./components/AuthModal";
 import { ReviewsPage } from "./pages/ReviewsPage";
 import { QuestionsModal } from "./components/QuestionsModal";
@@ -144,60 +143,6 @@ function AppContent() {
     const unsub = onWsEvent("order_status_updated", () => setHasOrdersNotification(true));
     return () => unsub();
   }, [user]);
-
-  // Auto-login via Telegram / VK platform
-  useEffect(() => {
-    if (user || loading) return;
-    const platform = detectPlatform();
-    if (platform === "telegram") {
-      const initData = getTelegramInitData();
-      if (initData) {
-        telegramAuth(initData)
-          .then((r) => setAuth(r.token, r.user))
-          .catch(() => {});
-      }
-    } else if (platform === "vk") {
-      const params = getVKParams();
-      if (params && params.access_token && params.user_id) {
-        vkAuth({ access_token: params.access_token, user_id: params.user_id })
-          .then((r) => setAuth(r.token, r.user))
-          .catch(() => {});
-      }
-    }
-  }, [user, loading, setAuth]);
-
-  // Handle OAuth redirect callbacks (Google, VK)
-  useEffect(() => {
-    if (user) return;
-
-    // Google OAuth callback: URL hash contains id_token
-    const hashParams = new URLSearchParams(window.location.hash.replace("#", "?"));
-    const googleToken = hashParams.get("id_token");
-    if (googleToken) {
-      apiGoogleAuth(googleToken)
-        .then((r) => {
-          setAuth(r.token, r.user);
-          window.history.replaceState(null, "", window.location.pathname);
-        })
-        .catch(() => {});
-      return;
-    }
-
-    // VK OAuth callback: URL query contains code
-    const queryParams = new URLSearchParams(window.location.search);
-    const vkCode = queryParams.get("code");
-    if (vkCode) {
-      const redirectUri = `${window.location.origin}${window.location.pathname}`;
-      vkCodeAuth(vkCode, redirectUri)
-        .then((r) => {
-          setAuth(r.token, r.user);
-          window.history.replaceState(null, "", window.location.pathname);
-          if (r.user.role === "admin") setShowAdmin(true);
-          if (r.user.role === "courier") setShowCourier(true);
-        })
-        .catch(() => {});
-    }
-  }, [user, setAuth]);
 
   // Cart merge: on auth, merge local cart to server
   useEffect(() => {
@@ -768,72 +713,6 @@ function AppContent() {
             setShowAccountSheet(false);
             if (result.user.role === "admin") setShowAdmin(true);
             if (result.user.role === "courier") setShowCourier(true);
-          }}
-          onTelegram={async () => {
-            const platform = detectPlatform();
-            if (platform === "telegram") {
-              const initData = getTelegramInitData();
-              if (!initData) return;
-              const result = await telegramAuth(initData);
-              setAuth(result.token, result.user);
-              setShowAccountSheet(false);
-              if (result.user.role === "admin") setShowAdmin(true);
-              if (result.user.role === "courier") setShowCourier(true);
-            } else {
-              const botName = import.meta.env.VITE_TELEGRAM_BOT_NAME || "your_bot_username";
-              const redirectUri = `${window.location.origin}/auth/tg-callback`;
-              const url = `https://oauth.telegram.org/auth?bot_id=${botName}&origin=${encodeURIComponent(window.location.origin)}&redirect_uri=${encodeURIComponent(redirectUri)}&embed=1`;
-              const w = window.open(url, "telegram-login", "width=400,height=600");
-              if (w) {
-                const handler = async (e: MessageEvent) => {
-                  if (e.origin !== "https://oauth.telegram.org") return;
-                  window.removeEventListener("message", handler);
-                  try {
-                    const result = await telegramBrowserAuth(e.data);
-                    setAuth(result.token, result.user);
-                    setShowAccountSheet(false);
-                    if (result.user.role === "admin") setShowAdmin(true);
-                    if (result.user.role === "courier") setShowCourier(true);
-                  } catch (e) {
-                    console.warn("Telegram browser auth failed:", e);
-                  }
-                };
-                window.addEventListener("message", handler);
-              }
-            }
-          }}
-          onVK={async () => {
-            const platform = detectPlatform();
-            if (platform === "vk") {
-              const params = getVKParams();
-              if (!params || !params.access_token || !params.user_id) return;
-              const result = await vkAuth({ access_token: params.access_token, user_id: params.user_id });
-              setAuth(result.token, result.user);
-              setShowAccountSheet(false);
-              if (result.user.role === "admin") setShowAdmin(true);
-              if (result.user.role === "courier") setShowCourier(true);
-            } else {
-              const appId = import.meta.env.VITE_VK_APP_ID;
-              if (!appId) {
-                setShowAccountSheet(false);
-                window.open("https://id.vk.com/about", "_blank");
-                return;
-              }
-              const redirectUri = `${window.location.origin}/auth/vk-callback`;
-              const url = `https://id.vk.com/auth?app_id=${appId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&v=1.45`;
-              window.location.href = url;
-            }
-          }}
-          onGoogle={async () => {
-            const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
-            if (!clientId) {
-              setShowAccountSheet(false);
-              window.open("https://console.cloud.google.com/apis/credentials", "_blank");
-              return;
-            }
-            const redirectUri = `${window.location.origin}/auth/callback`;
-            const url = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=id_token&scope=openid%20profile%20email&nonce=${Date.now()}`;
-            window.location.href = url;
           }}
           onLogout={() => { setShowAccountSheet(false); logout(); setHasNotification(false); setHasTradeInNotification(false); }}
           onClose={() => { setShowAccountSheet(false); }}
