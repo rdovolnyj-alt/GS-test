@@ -1,8 +1,13 @@
 server {
     listen 80;
-    server_name _;
+    server_name gs-grandstore.ru;
 
     client_max_body_size 10m;
+
+    # Let's Encrypt challenge
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
 
     root /usr/share/nginx/html;
     index index.html;
