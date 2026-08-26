@@ -1,3 +1,5 @@
+import { Sun, Moon } from "lucide-react";
+
 type Props = {
   theme: "dark" | "light";
   onToggle: () => void;
@@ -7,19 +9,40 @@ export function ThemeToggle({ theme, onToggle }: Props) {
   return (
     <button
       onClick={onToggle}
-      className="flex h-10 w-10 items-center justify-center rounded-full border border-[var(--c-border)] bg-[var(--c-surface)] text-[var(--c-text-80)] transition hover:bg-[var(--c-surface-hover)] active:scale-95"
-      aria-label={theme === "dark" ? "Светлая тема" : "Тёмная тема"}
+      type="button"
+      role="switch"
+      aria-checked={theme === "light"}
+      aria-label={theme === "dark" ? "Включить светлую тему" : "Включить тёмную тему"}
+      className="theme-toggle relative flex h-10 w-[130px] items-center rounded-full border border-[var(--c-border)] bg-[var(--c-surface)] px-2 transition-colors duration-300 hover:bg-[var(--c-surface-hover)]"
     >
-      {theme === "dark" ? (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
-          <circle cx="12" cy="12" r="5" />
-          <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
-        </svg>
-      ) : (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
-          <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" />
-        </svg>
-      )}
+      <span
+        aria-hidden
+        className={`theme-toggle-thumb absolute top-1/2 h-8 w-8 -translate-y-1/2 rounded-full bg-[var(--c-accent)] shadow-lg ${
+          theme === "light" ? "left-1" : "left-[calc(100%-2.25rem)]"
+        }`}
+      >
+        <span className="flex h-full w-full items-center justify-center">
+          {theme === "light" ? (
+            <Sun size={16} className="text-[var(--c-accent-fg)]" />
+          ) : (
+            <Moon size={16} className="text-[var(--c-accent-fg)]" />
+          )}
+        </span>
+      </span>
+      <span
+        className={`absolute left-3 top-1/2 -translate-y-1/2 whitespace-nowrap text-[10px] font-semibold tracking-wide text-[var(--c-text-60)] transition-opacity duration-400 ${
+          theme === "dark" ? "opacity-100" : "opacity-0"
+        }`}
+      >
+        Тёмная тема
+      </span>
+      <span
+        className={`absolute right-3 top-1/2 -translate-y-1/2 whitespace-nowrap text-[10px] font-semibold tracking-wide text-[var(--c-text-60)] transition-opacity duration-400 ${
+          theme === "light" ? "opacity-100" : "opacity-0"
+        }`}
+      >
+        Светлая тема
+      </span>
     </button>
   );
 }

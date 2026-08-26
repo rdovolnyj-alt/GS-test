@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 import socketio
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Request, Query
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -17,8 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from slowapi.errors import RateLimitExceeded
 from fastapi.responses import JSONResponse
 
-from models import async_session, Product, Category, ProductImage, Order, OrderItem, init_db, User, UserIdentity, AuthProvider, UserRole, Courier, OrderStatus, ProductPhotoGroup, Promo, Review, Faq, SupportConversation, SupportMessage
-from auth import hash_password, router as auth_router, get_current_user, get_optional_user, decode_token
+from models import async_session, Product, Category, ProductImage, Order, OrderItem, init_db, User, UserIdentity, AuthProvider, UserRole, Courier, OrderStatus, ProductPhotoGroup, Promo, Margin, Review, Faq, SupportConversation, SupportMessage
+from auth import hash_password, verify_password, router as auth_router, get_current_user, get_optional_user, decode_token
 from rate_limit import limiter
 from parserMAIN import parse_iphone_excel_to_dicts, parse_macbook_excel_to_dicts, parse_ipad_excel_to_dicts, parse_imac_excel_to_dicts, parse_watch_excel_to_dicts, parse_airpods_excel_to_dicts, parse_accessories_excel_to_dicts, parse_samsung_excel_to_dicts, parse_consoles_excel_to_dicts, parse_dyson_excel_to_dicts, parse_xiaomi_excel_to_dicts, parse_poco_excel_to_dicts, parse_stations_excel_to_dicts
 import openpyxl
@@ -175,7 +175,8 @@ async def require_admin(user: User = Depends(get_current_user)) -> User:
 
 class ProductCreate(BaseModel):
     name: str
-    price: float
+    price: Optional[float] = None
+    purchase_price: Optional[float] = None
     is_available: bool = True
     quantity: int = 1
     category_id: int
@@ -186,6 +187,7 @@ class ProductCreate(BaseModel):
 class ProductUpdate(BaseModel):
     name: Optional[str] = None
     price: Optional[float] = None
+    purchase_price: Optional[float] = None
     is_available: Optional[bool] = None
     quantity: Optional[int] = None
     category_id: Optional[int] = None
@@ -348,6 +350,23 @@ async def on_startup():
             await session.commit()
     except Exception:
         pass
+    # Миграция: цена закупки для товаров + цена продажи становится необязательной
+    try:
+        async with async_session() as session:
+            await session.execute(text("""
+                ALTER TABLE products ADD COLUMN IF NOT EXISTS purchase_price DOUBLE PRECISION
+            """))
+            # Переносим текущую цену в цену закупки (раньше импорт Excel
+            # записывал закупочную цену прямо в цену продажи).
+            await session.execute(text("""
+                UPDATE products SET purchase_price = price WHERE purchase_price IS NULL
+            """))
+            await session.execute(text("""
+                ALTER TABLE products ALTER COLUMN price DROP NOT NULL
+            """))
+            await session.commit()
+    except Exception:
+        pass
     # Backfill фото-групп по (наименование, цвет) из уже загруженных товаров
     try:
         async with async_session() as session:
@@ -435,7 +454,7 @@ async def migrate_orders_user_id():
 
 
 async def seed_demo_users():
-    """Создаёт единственный тестовый аккаунт из .env (TEST_USER_*), если он задан."""
+    """Создаёт/обновляет тестовый аккаунт из .env (TEST_USER_*), если он задан."""
     login = os.getenv("TEST_USER_LOGIN", "").strip()
     password = os.getenv("TEST_USER_PASSWORD", "")
     email = os.getenv("TEST_USER_EMAIL", "").strip() or None
@@ -451,7 +470,11 @@ async def seed_demo_users():
                 UserIdentity.provider_user_id.in_([v for v in (login, email) if v]),
             )
         )
-        if result.scalar_one_or_none():
+        existing = result.scalar_one_or_none()
+        if existing:
+            if not verify_password(password, existing.password_hash):
+                existing.password_hash = hash_password(password)
+                await session.commit()
             return
 
         user = User(name=name, email=email, phone=phone, username=login, role=UserRole.USER)
@@ -1266,6 +1289,7 @@ async def create_product(data: ProductCreate, db: AsyncSession = Depends(get_db)
     product = Product(
         name=data.name,
         price=data.price,
+        purchase_price=data.purchase_price,
         is_available=data.is_available,
         quantity=data.quantity,
         category_id=data.category_id,
@@ -1347,6 +1371,13 @@ def _product_color(attributes: dict | None) -> str:
     """Цвет товара из attributes (для сопоставления с фото-группами)."""
     c = (attributes or {}).get("color")
     return str(c).strip() if c is not None else ""
+
+
+def _product_effective_price(p: Product) -> float:
+    """Цена для покупателя: цена с маржой, либо (если не задана) цена закупки."""
+    if p.price is not None and p.price > 0:
+        return float(p.price)
+    return float(p.purchase_price or 0)
 
 
 async def _delete_photo_file_if_unused(db: AsyncSession, url: str):
@@ -1714,6 +1745,7 @@ async def import_excel(
 
     total_imported = 0
     results = []
+    imported_cat_ids: list[int] = []
 
     for sheet_name in selected:
         parser = SHEET_PARSERS.get(sheet_name)
@@ -1774,28 +1806,34 @@ async def import_excel(
 
             if product:
                 product.is_available = True
-                if (
-                    product.name == first["model"]
-                    and product.price == first["price"]
-                    and (product.attributes or {}) == attrs
-                    and product.quantity == quantity
-                ):
-                    unchanged += 1
-                else:
-                    if product.name != first["model"]:
-                        product.name = first["model"]
-                    if product.price != first["price"]:
-                        product.price = first["price"]
-                    if (product.attributes or {}) != attrs:
-                        product.attributes = attrs
-                    if product.quantity != quantity:
-                        product.quantity = quantity
+                # Если цена продажи была просто скопирована из закупки прошлым
+                # импортом (т.е. админ её ещё не настраивал), сбрасываем её —
+                # цену продажи задаёт админ отдельно (наценкой или вручную).
+                if product.purchase_price is not None and product.price == product.purchase_price:
+                    product.price = None
+                changed = False
+                if product.name != first["model"]:
+                    product.name = first["model"]
+                    changed = True
+                if product.purchase_price != first["price"]:
+                    product.purchase_price = first["price"]
+                    changed = True
+                if (product.attributes or {}) != attrs:
+                    product.attributes = attrs
+                    changed = True
+                if product.quantity != quantity:
+                    product.quantity = quantity
+                    changed = True
+                if changed:
                     updated += 1
+                else:
+                    unchanged += 1
             else:
                 product = Product(
                     name=first["model"],
                     raw_data=raw_data or None,
-                    price=first["price"],
+                    price=None,
+                    purchase_price=first["price"],
                     is_available=True,
                     quantity=quantity,
                     category_id=cat.id,
@@ -1845,11 +1883,226 @@ async def import_excel(
             "total": sheet_total,
             "category_id": cat.id,
         })
+        imported_cat_ids.append(cat.id)
+
+    # Применяем активные наценки к свежим ценам закупки, чтобы правила
+    # ценообразования переживали перезаливку таблицы.
+    await _apply_active_margins(db, imported_cat_ids, reset_without_rules=False)
 
     await db.commit()
     os.remove(tmp_path)
 
     return {"imported": total_imported, "details": results}
+
+
+### Наценки (правила ценообразования по категориям)
+
+class MarginCreate(BaseModel):
+    # "percent" | "fixed"
+    margin_type: str = "percent"
+    value: float
+    target_category_id: int
+    active: bool = True
+
+
+class MarginUpdate(BaseModel):
+    margin_type: str | None = None
+    value: float | None = None
+    target_category_id: int | None = None
+    active: bool | None = None
+
+
+def _margin_to_dict(m: Margin, category_name: str | None = None) -> dict:
+    return {
+        "id": m.id,
+        "margin_type": m.margin_type,
+        "value": m.value,
+        "target_category_id": m.target_category_id,
+        "target_category_name": (
+            m.target_category.name if m.target_category else category_name
+        ),
+        "active": m.active,
+        "created_at": m.created_at,
+        "updated_at": m.updated_at,
+    }
+
+
+async def _apply_active_margins(
+    db: AsyncSession, category_ids: list[int], reset_without_rules: bool = True
+) -> dict:
+    """Пересчитывает цены продажи товаров указанных категорий по активным
+    наценкам. Правила категории применяются последовательно (по id) к цене
+    закупки. Если активных правил в категории не осталось, цена продажи
+    сбрасывается — покупателю показывается цена закупки.
+    reset_without_rules=False оставляет цены в категориях без правил как есть
+    (используется при импорте Excel)."""
+    result: dict[int, dict] = {}
+    if not category_ids:
+        return {"updated": 0, "skipped_no_cost": 0}
+
+    rules_rows = (
+        await db.execute(
+            select(Margin)
+            .where(Margin.active == True, Margin.target_category_id.in_(category_ids))  # noqa: E712
+            .order_by(Margin.id)
+        )
+    ).scalars().all()
+    rules_by_cat: dict[int, list[Margin]] = defaultdict(list)
+    for r in rules_rows:
+        rules_by_cat[r.target_category_id].append(r)
+
+    products = (
+        await db.execute(select(Product).where(Product.category_id.in_(category_ids)))
+    ).scalars().all()
+
+    updated = 0
+    skipped_no_cost = 0
+    for p in products:
+        rules = rules_by_cat.get(p.category_id) or []
+        if not rules:
+            if not reset_without_rules:
+                continue
+            # Активных наценок в категории нет — цена продажи не нужна,
+            # покупателю показывается цена закупки.
+            if p.price is not None:
+                p.price = None
+                updated += 1
+            continue
+
+        base = p.purchase_price
+        if base is None or base <= 0:
+            skipped_no_cost += 1
+            continue
+
+        val = float(base)
+        for r in rules:
+            if r.margin_type == "fixed":
+                val += float(r.value)
+            else:
+                val *= 1 + float(r.value) / 100
+        new_price = round(val)
+        if p.price != new_price:
+            updated += 1
+        p.price = new_price
+
+    result["updated"] = updated
+    result["skipped_no_cost"] = skipped_no_cost
+    return result
+
+
+async def _get_margin_loaded(db: AsyncSession, margin_id: int) -> Margin | None:
+    result = await db.execute(
+        select(Margin)
+        .options(selectinload(Margin.target_category))
+        .where(Margin.id == margin_id)
+    )
+    return result.scalar_one_or_none()
+
+
+def _validate_margin_payload(margin_type: str | None, value: float | None):
+    if margin_type is not None and margin_type not in ("percent", "fixed"):
+        raise HTTPException(400, "Тип наценки должен быть percent или fixed")
+    if value is not None and value <= 0:
+        raise HTTPException(400, "Значение наценки должно быть больше нуля")
+
+
+@fastapi_app.get("/api/admin/margins")
+async def list_margins(db: AsyncSession = Depends(get_db), current_user: User = Depends(require_admin)):
+    rows = (
+        await db.execute(
+            select(Margin).options(selectinload(Margin.target_category)).order_by(Margin.id)
+        )
+    ).scalars().all()
+    cat_ids = [m.target_category_id for m in rows if m.target_category_id is not None]
+    counts: dict[int, int] = {}
+    if cat_ids:
+        cnt_rows = await db.execute(
+            select(Product.category_id, func.count(Product.id))
+            .where(Product.category_id.in_(cat_ids))
+            .group_by(Product.category_id)
+        )
+        counts = {cid: cnt for cid, cnt in cnt_rows.all()}
+    items = []
+    for m in rows:
+        d = _margin_to_dict(m)
+        d["products_count"] = counts.get(m.target_category_id, 0)
+        items.append(d)
+    return items
+
+
+@fastapi_app.post("/api/admin/margins")
+async def create_margin(data: MarginCreate, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_admin)):
+    _validate_margin_payload(data.margin_type, data.value)
+    cat = (await db.execute(select(Category).where(Category.id == data.target_category_id))).scalar_one_or_none()
+    if not cat:
+        raise HTTPException(404, "Категория не найдена")
+    dup = (
+        await db.execute(select(Margin).where(Margin.target_category_id == data.target_category_id))
+    ).scalar_one_or_none()
+    if dup:
+        raise HTTPException(400, "Для этой категории уже задана наценка — отредактируйте её")
+    margin = Margin(
+        margin_type=data.margin_type,
+        value=data.value,
+        target_category_id=data.target_category_id,
+        active=data.active,
+    )
+    db.add(margin)
+    stats = await _apply_active_margins(db, [data.target_category_id])
+    await db.commit()
+    margin = await _get_margin_loaded(db, margin.id)
+    d = _margin_to_dict(margin)
+    d["applied"] = stats
+    return d
+
+
+@fastapi_app.patch("/api/admin/margins/{margin_id}")
+async def update_margin(margin_id: int, data: MarginUpdate, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_admin)):
+    margin = (await db.execute(select(Margin).where(Margin.id == margin_id))).scalar_one_or_none()
+    if not margin:
+        raise HTTPException(status_code=404, detail="Наценка не найдена")
+    payload = data.model_dump(exclude_unset=True)
+    _validate_margin_payload(payload.get("margin_type"), payload.get("value"))
+
+    affected_cats = {margin.target_category_id}
+    if "target_category_id" in payload:
+        new_cat_id = payload["target_category_id"]
+        cat = (await db.execute(select(Category).where(Category.id == new_cat_id))).scalar_one_or_none()
+        if not cat:
+            raise HTTPException(404, "Категория не найдена")
+        if new_cat_id != margin.target_category_id:
+            dup = (
+                await db.execute(
+                    select(Margin).where(
+                        Margin.target_category_id == new_cat_id,
+                        Margin.id != margin_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if dup:
+                raise HTTPException(400, "Для этой категории уже задана наценка — отредактируйте её")
+        affected_cats.add(new_cat_id)
+    for key, value in payload.items():
+        setattr(margin, key, value)
+
+    stats = await _apply_active_margins(db, list(affected_cats))
+    await db.commit()
+    margin = await _get_margin_loaded(db, margin_id)
+    d = _margin_to_dict(margin)
+    d["applied"] = stats
+    return d
+
+
+@fastapi_app.delete("/api/admin/margins/{margin_id}")
+async def delete_margin(margin_id: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_admin)):
+    margin = (await db.execute(select(Margin).where(Margin.id == margin_id))).scalar_one_or_none()
+    if not margin:
+        raise HTTPException(status_code=404, detail="Наценка не найдена")
+    cat_id = margin.target_category_id
+    await db.delete(margin)
+    stats = await _apply_active_margins(db, [cat_id])
+    await db.commit()
+    return {"ok": True, "applied": stats}
 
 
 class OrderItemCreate(BaseModel):
@@ -2056,7 +2309,7 @@ async def _find_promos_for_cart(db: AsyncSession, data: OrderCreate) -> list[Pro
         rows = (await db.execute(select(Product).where(Product.id.in_(product_ids)))).scalars().all()
         products = {p.id: p for p in rows}
 
-    total = sum((products.get(it.product_id).price if products.get(it.product_id) else it.price_at_purchase) * it.quantity for it in data.items)
+    total = sum((_product_effective_price(products.get(it.product_id)) if products.get(it.product_id) else it.price_at_purchase) * it.quantity for it in data.items)
 
     def matches(p: Promo) -> bool:
         if p.min_total is not None and total < p.min_total:
@@ -2355,7 +2608,6 @@ class VerifyCodeRequest(BaseModel):
 
 
 def _generate_courier_login() -> str:
-    import uuid
     return "courier_" + uuid.uuid4().hex[:8]
 
 

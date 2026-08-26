@@ -5,7 +5,8 @@ type ImageInput = { image_url: string; is_main: boolean };
 
 export type ProductInput = {
   name: string;
-  price: number;
+  price?: number | null;
+  purchase_price?: number | null;
   is_available?: boolean;
   quantity?: number;
   category_id: number;
@@ -109,5 +110,6 @@ export async function importProductsExcel(file: File, sheets: string[]): Promise
     const text = await res.text();
     throw new Error(text || res.statusText);
   }
-  return res.json();
+    return res.json();
 }
+

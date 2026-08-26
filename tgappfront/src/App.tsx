@@ -1,5 +1,5 @@
  import { useState, useEffect, useRef, useCallback } from "react";
-import { ShoppingCart, User, Shield, Star, Bell } from "lucide-react";
+import { ShoppingCart, Star, Bell, Menu, Sun, Moon, User, ArrowLeft, LogOut, Package } from "lucide-react";
 import type { Product, CartItem, DeliveryData, ApiProduct } from "./types/product";
 import type { Category } from "./data/categories";
 import { buildCategories } from "./data/categories";
@@ -12,7 +12,6 @@ import { HomePage } from "./pages/HomePage";
 import { SubcategoryPage } from "./pages/SubcategoryPage";
 import { ProductPage } from "./pages/ProductPage";
 import { CartPage } from "./pages/CartPage";
-import { ThemeToggle } from "./components/ThemeToggle";
 import { CheckoutModal } from "./components/CheckoutModal";
 import { AdminPage } from "./admin/AdminPage";
 import { CourierPage } from "./pages/CourierPage";
@@ -26,6 +25,7 @@ import { connectWs, disconnectWs, onWsEvent } from "./api/socket";
 import { AuthModal } from "./components/AuthModal";
 import { ReviewsPage } from "./pages/ReviewsPage";
 import { QuestionsModal } from "./components/QuestionsModal";
+import { ScrollToTopButton } from "./components/ScrollToTopButton";
 import { fetchSupportUnread } from "./api/support";
 
 const THEME_PREF_KEY = "theme_pref";
@@ -74,6 +74,7 @@ function AppContent() {
   const [showAdmin, setShowAdmin] = useState(false);
   const [showCourier, setShowCourier] = useState(false);
   const [showQuestions, setShowQuestions] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loadingCategories, setLoadingCategories] = useState(true);
   const [orderSubmitting, setOrderSubmitting] = useState(false);
@@ -88,7 +89,51 @@ function AppContent() {
   const [reviewsCount, setReviewsCount] = useState(0);
   const [openReviewFormOnOpen, setOpenReviewFormOnOpen] = useState(false);
   const cartBtnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const navHistory = useRef<Array<{ tab: "home" | "cart"; category: Category | null; variants: Product[] | null; reviews: boolean }>>([]);
   const showCart = activeTab === "cart";
+
+  const snapshotNav = useCallback(() => {
+    navHistory.current.push({
+      tab: activeTab,
+      category: selectedCategory,
+      variants: selectedVariants,
+      reviews: showReviews,
+    });
+  }, [activeTab, selectedCategory, selectedVariants, showReviews]);
+
+  const goBack = useCallback(() => {
+    const prev = navHistory.current.pop();
+    if (prev) {
+      setActiveTab(prev.tab);
+      setSelectedCategory(prev.category);
+      setSelectedVariants(prev.variants);
+      setShowReviews(prev.reviews);
+    } else {
+      setActiveTab("home");
+      setSelectedCategory(null);
+      setSelectedVariants(null);
+      setShowReviews(false);
+    }
+  }, []);
+
+  const isSubPage = showCart || !!selectedVariants || !!selectedCategory || showReviews;
+
+  useEffect(() => {
+    if (!showMenu) return;
+    const onDown = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setShowMenu(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setShowMenu(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [showMenu]);
 
   useEffect(() => {
     (async () => {
@@ -473,6 +518,7 @@ function AppContent() {
           <MyOrdersPage
             onBack={closeMyOrders}
             onOpenReviews={() => {
+              snapshotNav();
               closeMyOrders();
               setOpenReviewFormOnOpen(true);
               setShowReviews(true);
@@ -489,60 +535,133 @@ function AppContent() {
       <div className="hero-glow" />
       <header className="sticky top-0 z-20 border-b border-[var(--c-border)] bg-[var(--c-bg-header)] backdrop-blur-xl">
         <div className="mx-auto grid max-w-7xl grid-cols-3 items-center gap-4 px-4 py-4">
-          <div className="flex items-center gap-2">
-            {user?.role === "admin" && (
+          <div ref={menuRef} className="relative flex items-center gap-2">
+            <button
+              onClick={() => setShowMenu((v) => !v)}
+              className={`flex h-10 w-10 items-center justify-center rounded-full border transition active:scale-95 ${
+                showMenu
+                  ? "border-[var(--c-accent-border)] bg-[var(--c-accent-bg)] text-[var(--c-accent-soft)]"
+                  : user
+                    ? "border-[var(--c-accent-border)] bg-[var(--c-accent-bg)] text-[var(--c-accent)] hover:bg-[var(--c-accent-border)]"
+                    : "border-[var(--c-border)] bg-[var(--c-surface)] text-[var(--c-text-80)] hover:bg-[var(--c-surface-hover)]"
+              }`}
+              aria-label="Меню"
+            >
+              {user ? <User size={20} /> : <Menu size={20} />}
+            </button>
+            {isSubPage && (
               <button
-                onClick={() => setShowAdmin(true)}
-                className="flex h-10 w-10 items-center justify-center rounded-full border border-[var(--c-accent-border)] bg-[var(--c-accent-bg)] text-[var(--c-accent-soft)] transition hover:bg-[var(--c-accent-border)] active:scale-95"
-                aria-label="Админ-панель"
+                onClick={goBack}
+                className="flex h-10 w-10 items-center justify-center rounded-full border border-[var(--c-border)] bg-[var(--c-surface)] text-[var(--c-text-80)] transition hover:bg-[var(--c-surface-hover)] active:scale-95"
+                aria-label="Назад"
               >
-                <Shield size={20} />
+                <ArrowLeft size={20} />
               </button>
             )}
-            <button
-              onClick={() => setShowAccountSheet(true)}
-              className={`relative flex h-10 w-10 items-center justify-center rounded-full border transition active:scale-95 ${
-                user
-                  ? "border-[var(--c-accent-border)] bg-[var(--c-accent-bg)] text-[var(--c-accent-soft)]"
-                  : "border-[var(--c-border)] bg-[var(--c-surface)] text-[var(--c-text-80)] hover:bg-[var(--c-surface-hover)]"
-              }`}
-              aria-label="Аккаунт"
-            >
-              <User size={20} />
-              {user && (hasNotification || hasTradeInNotification || hasOrdersNotification) && (
-                <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-[#fbbf24] text-black shadow-md">
-                  <Bell size={10} />
-                </span>
-              )}
-            </button>
-            {(selectedVariants || selectedCategory || showCart || showReviews) ? (
-              <button
-                onClick={() => {
-                  if (showReviews) setShowReviews(false);
-                  else if (showCart) setActiveTab("home");
-                  else if (selectedVariants) setSelectedVariants(null);
-                  else if (selectedCategory) setSelectedCategory(null);
-                }}
-                className="flex h-10 w-10 items-center justify-center rounded-full border border-[var(--c-border)] bg-[var(--c-surface)] text-[var(--c-text-80)] transition hover:bg-[var(--c-surface-hover)] active:scale-95"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
-                </svg>
-              </button>
-            ) : activeTab === "home" ? (
-              <button
-                onClick={() => setShowQuestions(true)}
-                className="relative flex h-10 w-10 items-center justify-center rounded-full border border-[var(--c-border)] bg-[var(--c-surface)] text-[var(--c-text-80)] transition hover:bg-[var(--c-surface-hover)] active:scale-95"
-                aria-label="Вопросы"
-              >
-                <span className="text-lg font-bold">?</span>
-                {user && hasSupportNotification && (
-                  <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-[#fbbf24] text-black shadow-md">
-                    <Bell size={10} />
+            {showMenu && (
+              <div className="absolute left-0 top-full z-40 mt-2 w-64 overflow-hidden rounded-2xl border border-[var(--c-border)] bg-[var(--c-bg)] p-2 shadow-2xl">
+                <button
+                  onClick={() => { setShowMenu(false); setShowAccountSheet(true); }}
+                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-[var(--c-text-80)] transition hover:bg-[var(--c-surface-hover)]"
+                >
+                  <span className="flex h-6 w-6 items-center justify-center text-[var(--c-text-80)]">
+                    <User size={18} />
                   </span>
+                  {user ? user.name : "Профиль"}
+                  {user && (hasNotification || hasTradeInNotification || hasOrdersNotification) && (
+                    <span className="ml-auto flex h-4 w-4 items-center justify-center rounded-full bg-[#fbbf24] text-black shadow-md">
+                      <Bell size={10} />
+                    </span>
+                  )}
+                </button>
+                {user && (
+                  <button
+                    onClick={() => {
+                      snapshotNav();
+                      setShowMenu(false);
+                      setShowMyOrders(true);
+                      setHasNotification(false);
+                      setHasTradeInNotification(false);
+                      markOrdersRead().catch(() => {});
+                      setHasOrdersNotification(false);
+                      markCompletedSeen();
+                    }}
+                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-[var(--c-text-80)] transition hover:bg-[var(--c-surface-hover)]"
+                  >
+                    <span className="flex h-6 w-6 items-center justify-center text-[var(--c-text-80)]">
+                      <Package size={18} />
+                    </span>
+                    Мои заказы
+                    {hasOrdersNotification && (
+                      <span className="ml-auto flex h-4 w-4 items-center justify-center rounded-full bg-[#fbbf24] text-black shadow-md">
+                        <Bell size={10} />
+                      </span>
+                    )}
+                  </button>
                 )}
-              </button>
-            ) : null}
+                <button
+                  onClick={() => { setShowMenu(false); setShowQuestions(true); }}
+                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-[var(--c-text-80)] transition hover:bg-[var(--c-surface-hover)]"
+                >
+                  <span className="flex h-6 w-6 items-center justify-center text-base font-bold leading-none">?</span>
+                  Вопросы
+                  {user && hasSupportNotification && (
+                    <span className="ml-auto flex h-4 w-4 items-center justify-center rounded-full bg-[#fbbf24] text-black shadow-md">
+                      <Bell size={10} />
+                    </span>
+                  )}
+                </button>
+                <div className="my-1 h-px bg-[var(--c-border)]" />
+                <div className="flex items-center justify-center gap-2 px-2 py-2">
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={theme === "light"}
+                    onClick={toggleTheme}
+                    aria-label={theme === "dark" ? "Включить светлую тему" : "Включить тёмную тему"}
+                    className="theme-toggle relative flex h-10 w-[130px] items-center rounded-full border border-[var(--c-border)] bg-[var(--c-surface)] px-2 transition-colors duration-300 hover:bg-[var(--c-surface-hover)]"
+                  >
+                    <span
+                      aria-hidden
+                      className={`theme-toggle-thumb absolute top-1/2 h-8 w-8 -translate-y-1/2 rounded-full bg-[var(--c-accent)] shadow-lg ${
+                        theme === "light" ? "left-1" : "left-[calc(100%-2.25rem)]"
+                      }`}
+                    >
+                      <span className="flex h-full w-full items-center justify-center">
+                        {theme === "light" ? (
+                          <Sun size={16} className="text-[var(--c-accent-fg)]" />
+                        ) : (
+                          <Moon size={16} className="text-[var(--c-accent-fg)]" />
+                        )}
+                      </span>
+                    </span>
+                    <span
+                      className={`absolute left-3 top-1/2 -translate-y-1/2 whitespace-nowrap text-[10px] font-semibold tracking-wide text-[var(--c-text-60)] transition-opacity duration-400 ${
+                        theme === "dark" ? "opacity-100" : "opacity-0"
+                      }`}
+                    >
+                      Тёмная тема
+                    </span>
+                    <span
+                      className={`absolute right-3 top-1/2 -translate-y-1/2 whitespace-nowrap text-[10px] font-semibold tracking-wide text-[var(--c-text-60)] transition-opacity duration-400 ${
+                        theme === "light" ? "opacity-100" : "opacity-0"
+                      }`}
+                    >
+                      Светлая тема
+                    </span>
+                  </button>
+                  {user && (
+                    <button
+                      onClick={() => { setShowMenu(false); logout(); setHasNotification(false); setHasTradeInNotification(false); }}
+                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[var(--c-danger-border)] bg-[var(--c-danger-bg)] text-[var(--c-danger)] transition hover:bg-[var(--c-danger-border)] active:scale-95"
+                      aria-label="Выйти"
+                    >
+                      <LogOut size={18} />
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="flex justify-center">
@@ -552,10 +671,9 @@ function AppContent() {
           </div>
 
           <div className="flex items-center justify-end gap-2">
-            <ThemeToggle theme={theme} onToggle={toggleTheme} />
             <button
               ref={cartBtnRef}
-              onClick={() => setActiveTab("cart")}
+              onClick={() => { snapshotNav(); setActiveTab("cart"); }}
               className={`relative flex h-10 w-10 items-center justify-center rounded-full border border-[var(--c-border)] bg-[var(--c-surface)] text-[var(--c-text-80)] transition hover:bg-[var(--c-surface-hover)] active:scale-95 ${cartBump ? "animate-cart-bump" : ""}`}
             >
               <ShoppingCart size={20} />
@@ -604,7 +722,7 @@ function AppContent() {
           <SubcategoryPage
             categoryName={selectedCategory.name}
             items={selectedCategory.items}
-            onSelectProduct={setSelectedVariants}
+            onSelectProduct={(v) => { snapshotNav(); setSelectedVariants(v); }}
           />
         </main>
       ) : (
@@ -634,6 +752,7 @@ function AppContent() {
                 </a>
                 <button
                   onClick={() => {
+                    snapshotNav();
                     setOpenReviewFormOnOpen(false);
                     setShowReviews(true);
                   }}
@@ -653,10 +772,12 @@ function AppContent() {
           <HomePage
             categories={categories}
             loading={loadingCategories}
-            onOpenCategory={setSelectedCategory}
+            onOpenCategory={(cat) => { snapshotNav(); setSelectedCategory(cat); }}
           />
         </main>
       )}
+
+      {!showReviews && !showCart && !selectedVariants && <ScrollToTopButton />}
 
       {showOrderModal && (
         <CheckoutModal
@@ -714,27 +835,14 @@ function AppContent() {
             if (result.user.role === "admin") setShowAdmin(true);
             if (result.user.role === "courier") setShowCourier(true);
           }}
-          onLogout={() => { setShowAccountSheet(false); logout(); setHasNotification(false); setHasTradeInNotification(false); }}
           onClose={() => { setShowAccountSheet(false); }}
           onUpdateProfile={async (field, value) => {
             const result = await updateProfile({ [field]: value || undefined });
             updateUser(result.user);
           }}
-          onShowMyOrders={() => {
-            setShowAccountSheet(false);
-            setShowMyOrders(true);
-            setHasNotification(false);
-            setHasTradeInNotification(false);
-            markOrdersRead().catch(() => {});
-            setHasOrdersNotification(false);
-            markCompletedSeen();
-          }}
           onShowSetPassword={() => { setShowAccountSheet(false); setShowSetPassword(true); }}
           onShowAdmin={() => { setShowAccountSheet(false); setShowAdmin(true); }}
           onShowCourier={() => { setShowAccountSheet(false); setShowCourier(true); }}
-          hasNotification={hasNotification}
-          hasTradeInNotification={hasTradeInNotification}
-          hasOrdersNotification={hasOrdersNotification}
         />
       )}
 

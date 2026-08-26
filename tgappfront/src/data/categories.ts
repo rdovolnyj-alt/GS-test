@@ -9,11 +9,13 @@ export type Category = {
 };
 
 export function mapApiProduct(p: ApiProduct): Product {
+  // Цена с маржой, либо (если не задана) цена закупки — по умолчанию для покупателя
+  const effectivePrice = p.price != null && p.price > 0 ? p.price : (p.purchase_price ?? 0);
   return {
     id: String(p.id),
     title: p.name,
     category: p.category?.name ?? "",
-    price: p.price,
+    price: effectivePrice,
     images: p.images.length > 0
       ? p.images.map((img) => img.image_url)
       : ["/placeholder.png"],

@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback, Fragment } from "react";
-import { Plus, X, Loader2, Paperclip, Pencil, Trash2, FileSpreadsheet, ChevronDown, List, Image, Percent, Tag } from "lucide-react";
+import { Plus, X, Loader2, Paperclip, Pencil, Trash2, FileSpreadsheet, ChevronDown, List, Image, Percent, Tag, Gift, Banknote } from "lucide-react";
 import type { ApiProduct, Category } from "../types/product";
 import {
   fetchProducts,
@@ -13,7 +13,6 @@ import {
   addPhotoGroupImages,
   removePhotoGroupImage,
   deletePhotoGroup,
-  deleteAllPhotoGroups,
   type ExcelSheet,
   type PhotoGroup,
 } from "../api/products";
@@ -25,7 +24,15 @@ import {
   type Promo,
   type PromoInput,
 } from "../api/promos";
+import {
+  fetchMargins,
+  createMargin,
+  updateMargin,
+  deleteMargin,
+  type Margin,
+} from "../api/margins";
 import { uploadFile } from "../utils/upload";
+import { ScrollToTopButton } from "../components/ScrollToTopButton";
 
 type AttributeDef = {
   key: string;
@@ -159,11 +166,12 @@ const emptyPromoForm: PromoForm = {
   active: true,
 };
 
-type ProductsSubTab = "list" | "photos" | "promo";
+type ProductsSubTab = "list" | "photos" | "margins" | "promo";
 
 const subTabLabels: Record<ProductsSubTab, string> = {
   list: "Список",
   photos: "Фото",
+  margins: "Наценка",
   promo: "Акции",
 };
 
@@ -196,15 +204,26 @@ export function ProductsTab() {
   const [photoGroupTargetId, setPhotoGroupTargetId] = useState<number | null>(null);
   const [photoUploadingGroupId, setPhotoUploadingGroupId] = useState<number | null>(null);
   const [photoDeleting, setPhotoDeleting] = useState<string | null>(null);
-  const [photoGroupToDelete, setPhotoGroupToDelete] = useState<PhotoGroup | null>(null);
-  const [photoGroupDeleting, setPhotoGroupDeleting] = useState<number | null>(null);
-  const [photoDeleteAll, setPhotoDeleteAll] = useState(false);
-  const [photoDeletingAll, setPhotoDeletingAll] = useState(false);
+  const [selectedGroupIds, setSelectedGroupIds] = useState<number[]>([]);
+  const [groupsDeleting, setGroupsDeleting] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [successFading, setSuccessFading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const excelInputRef = useRef<HTMLInputElement>(null);
   const groupPhotoInputRef = useRef<HTMLInputElement>(null);
+
+  const [margins, setMargins] = useState<Margin[]>([]);
+  const [marginsLoading, setMarginsLoading] = useState(false);
+  const [marginModal, setMarginModal] = useState(false);
+  const [marginEditing, setMarginEditing] = useState<Margin | null>(null);
+  const [marginForm, setMarginForm] = useState<{ margin_type: "percent" | "fixed"; value: string; target_category_id: number }>({
+    margin_type: "percent",
+    value: "20",
+    target_category_id: 0,
+  });
+  const [marginSaving, setMarginSaving] = useState(false);
+  const [marginDeleting, setMarginDeleting] = useState<number | null>(null);
+  const [marginToDelete, setMarginToDelete] = useState<Margin | null>(null);
 
   const [promos, setPromos] = useState<Promo[]>([]);
   const [promoProducts, setPromoProducts] = useState<ApiProduct[]>([]);
@@ -463,6 +482,125 @@ export function ProductsTab() {
     x.name.toLowerCase().includes(promoProductQuery.toLowerCase())
   ).slice(0, 50);
 
+  async function loadMargins() {
+    setMarginsLoading(true);
+    try {
+      setMargins(await fetchMargins());
+    } catch {
+      setMargins([]);
+    } finally {
+      setMarginsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void (async () => {
+      await loadMargins();
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (activeSubTab === "margins") {
+      void (async () => {
+        await loadMargins();
+      })();
+    }
+  }, [activeSubTab]);
+
+  function fmtMarginValue(m: Pick<Margin, "margin_type" | "value">) {
+    return m.margin_type === "percent"
+      ? `+${Number(m.value)}%`
+      : `+${Number(m.value).toLocaleString("ru-RU")} ₽`;
+  }
+
+  function openMarginAdd() {
+    setMarginEditing(null);
+    setMarginForm({
+      margin_type: "percent",
+      value: "20",
+      target_category_id: categories[0]?.id || 0,
+    });
+    setMarginModal(true);
+  }
+
+  function openMarginEdit(m: Margin) {
+    setMarginEditing(m);
+    setMarginForm({
+      margin_type: m.margin_type,
+      value: String(m.value),
+      target_category_id: m.target_category_id,
+    });
+    setMarginModal(true);
+  }
+
+  async function handleSaveMargin() {
+    if (!marginForm.target_category_id) {
+      showToast("Выберите категорию");
+      return;
+    }
+    const val = parseFloat(marginForm.value.replace(",", "."));
+    if (isNaN(val) || val <= 0) {
+      showToast("Введите значение наценки больше нуля");
+      return;
+    }
+    if (
+      !marginEditing &&
+      margins.some((m) => m.target_category_id === marginForm.target_category_id)
+    ) {
+      showToast("Для этой категории уже есть наценка — отредактируйте её");
+      return;
+    }
+    setMarginSaving(true);
+    try {
+      const payload = {
+        margin_type: marginForm.margin_type,
+        value: val,
+        target_category_id: marginForm.target_category_id,
+      };
+      const res = marginEditing
+        ? await updateMargin(marginEditing.id, payload)
+        : await createMargin(payload);
+      setMarginModal(false);
+      await loadMargins();
+      const stats = (res as { applied?: { updated: number; skipped_no_cost: number } }).applied;
+      let msg = marginEditing ? "Наценка обновлена" : "Наценка добавлена";
+      if (stats) {
+        if (stats.updated > 0) msg += `, цен обновлено: ${stats.updated}`;
+        if (stats.skipped_no_cost > 0) msg += `, без закупки пропущено: ${stats.skipped_no_cost}`;
+      }
+      showToast(msg);
+    } catch (err) {
+      showToast("Ошибка сохранения: " + (err instanceof Error ? err.message : "неизвестная ошибка"));
+    } finally {
+      setMarginSaving(false);
+    }
+  }
+
+  async function handleToggleMargin(m: Margin) {
+    try {
+      await updateMargin(m.id, { active: !m.active });
+      await loadMargins();
+    } catch (err) {
+      showToast("Ошибка: " + (err instanceof Error ? err.message : "неизвестная ошибка"));
+    }
+  }
+
+  async function confirmDeleteMargin() {
+    if (!marginToDelete) return;
+    setMarginDeleting(marginToDelete.id);
+    try {
+      await deleteMargin(marginToDelete.id);
+      await loadMargins();
+      showToast("Наценка удалена, цены пересчитаны");
+      setMarginToDelete(null);
+    } catch (err) {
+      showToast("Ошибка удаления: " + (err instanceof Error ? err.message : "неизвестная ошибка"));
+    } finally {
+      setMarginDeleting(null);
+    }
+  }
+
+
   async function handleGroupPhotoPick(e: React.ChangeEvent<HTMLInputElement>) {
     const files = e.target.files;
     if (!files || files.length === 0) return;
@@ -504,37 +642,22 @@ export function ProductsTab() {
     }
   }
 
-  async function confirmDeletePhotoGroup() {
-    const g = photoGroupToDelete;
-    if (!g) return;
-    setPhotoGroupDeleting(g.id);
+  async function handleBulkDeleteGroups() {
+    const ids = [...selectedGroupIds];
+    if (ids.length === 0) return;
+    const label = ids.length === 1 ? "группу" : ids.length < 5 ? "группы" : "групп";
+    if (!confirm(`Точно удалить ${ids.length} ${label} фото? Фото будут отвязаны от всех товаров этих групп. Это действие нельзя отменить.`)) return;
+    setGroupsDeleting(true);
     try {
-      await deletePhotoGroup(g.id);
-      setPhotoGroupToDelete(null);
+      await Promise.all(ids.map((id) => deletePhotoGroup(id)));
+      setSelectedGroupIds([]);
       await loadPhotoGroups();
       reload();
-      showToast("Группа удалена");
-    } catch (err) {
-      showToast("Ошибка удаления группы: " + (err instanceof Error ? err.message : "неизвестная ошибка"));
-    } finally {
-      setPhotoGroupDeleting(null);
-    }
-  }
-
-  async function confirmDeleteAllPhotoGroups() {
-    setPhotoDeletingAll(true);
-    try {
-      await deleteAllPhotoGroups();
-      setPhotoDeleteAll(false);
-      setPhotoFilter("");
-      setPhotoFilterCat([]);
-      await loadPhotoGroups();
-      reload();
-      showToast("Все фото-группы удалены");
+      showToast(`Фото-группы удалены (${ids.length})`);
     } catch (err) {
       showToast("Ошибка удаления: " + (err instanceof Error ? err.message : "неизвестная ошибка"));
     } finally {
-      setPhotoDeletingAll(false);
+      setGroupsDeleting(false);
     }
   }
 
@@ -561,7 +684,7 @@ export function ProductsTab() {
     setEditing(p);
     setForm({
       name: p.name,
-      price: String(p.price),
+      price: p.price != null && p.price > 0 ? String(p.price) : "",
       purchase_price: p.purchase_price != null ? String(p.purchase_price) : "",
       is_available: p.is_available,
       quantity: p.quantity ?? 1,
@@ -573,11 +696,11 @@ export function ProductsTab() {
   }
 
   async function handleSave() {
-    if (!form.name || !form.price || !form.category_id) return;
+    if (!form.name || !form.category_id) return;
     setSaving(true);
     const payload: Record<string, unknown> = {
       name: form.name,
-      price: Number(form.price),
+      price: form.price ? Number(form.price) : null,
       purchase_price: form.purchase_price ? Number(form.purchase_price) : null,
       is_available: form.is_available,
       quantity: form.quantity,
@@ -639,13 +762,16 @@ export function ProductsTab() {
 
   const selectedCatName = categories.find((c) => c.id === form.category_id)?.name || "";
   const attrDefs = CATEGORY_ATTRS[selectedCatName] || [];
+  const hasFloatingPanel =
+    (activeSubTab === "list" && selectedIds.length > 0) ||
+    (activeSubTab === "photos" && selectedGroupIds.length > 0);
 
   return (
     <div>
       {/* Subtabs */}
       <div className="mb-4 flex items-center justify-between">
         <div className="flex gap-2">
-          {(["list", "photos", "promo"] as ProductsSubTab[]).map((tab) => (
+          {(["list", "photos", "margins", "promo"] as ProductsSubTab[]).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveSubTab(tab)}
@@ -658,7 +784,8 @@ export function ProductsTab() {
               <span className={`inline-flex transition-all duration-300 ${activeSubTab === tab ? "mr-1.5" : ""}`}>
                 {tab === "list" && <List size={14} />}
                 {tab === "photos" && <Image size={14} />}
-                {tab === "promo" && <Percent size={14} />}
+                {tab === "margins" && <Percent size={14} />}
+                {tab === "promo" && <Gift size={14} />}
               </span>
               <span
                 className="overflow-hidden whitespace-nowrap transition-all duration-300"
@@ -672,7 +799,7 @@ export function ProductsTab() {
               </span>
               {activeSubTab === tab && (
                 <span className="ml-1.5 rounded-full bg-[var(--c-text-40)]/20 px-1.5 py-0.5 text-[10px]">
-                  {tab === "list" ? totalCount : tab === "photos" ? photoGroups.length : promos.length}
+                  {tab === "list" ? totalCount : tab === "photos" ? photoGroups.length : tab === "margins" ? margins.length : promos.length}
                 </span>
               )}
             </button>
@@ -711,7 +838,7 @@ export function ProductsTab() {
                         }}
                         className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                       />
-                      <span className="text-[var(--c-text)]">{c.name}</span>
+                      <span className="text-[var(--c-text)]">{c.name} ({c.product_count})</span>
                     </label>
                   );
                 })}
@@ -974,7 +1101,7 @@ export function ProductsTab() {
                         <td className="px-3 py-2.5 text-[var(--c-text)] font-medium">{p.name}</td>
                         <td className="px-3 py-2.5 text-[var(--c-text-70)]">{p.category?.name || "—"}</td>
                         <td className="px-3 py-2.5 text-right text-[var(--c-text)] font-medium">
-                          {p.price.toLocaleString("ru-RU")} ₽
+                          {p.price != null && p.price > 0 ? `${p.price.toLocaleString("ru-RU")} ₽` : "—"}
                         </td>
                         <td className="px-3 py-2.5 text-right text-[var(--c-text-50)]">
                           {p.purchase_price != null ? `${p.purchase_price.toLocaleString("ru-RU")} ₽` : "—"}
@@ -1055,7 +1182,7 @@ export function ProductsTab() {
                           }}
                           className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                         />
-                        <span className="text-[var(--c-text)]">{c.name}</span>
+                        <span className="text-[var(--c-text)]">{c.name} ({c.product_count})</span>
                       </label>
                     );
                   })}
@@ -1073,15 +1200,6 @@ export function ProductsTab() {
             <span className="text-sm text-[var(--c-text-50)]">
               Групп: {filteredPhotoGroups.length} / {photoGroups.length}
             </span>
-            <button
-              type="button"
-              onClick={() => setPhotoDeleteAll(true)}
-              disabled={photoGroups.length === 0 || photoDeletingAll}
-              className="ml-auto flex h-9 items-center gap-2 rounded-xl border border-[var(--c-danger-border)] bg-[var(--c-danger-bg)] px-3 text-xs font-medium text-[var(--c-danger)] transition hover:opacity-90 disabled:opacity-40"
-            >
-              {photoDeletingAll ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
-              Удалить все
-            </button>
           </div>
 
           <input
@@ -1108,16 +1226,54 @@ export function ProductsTab() {
               <table className="w-full table-fixed text-sm">
                 <thead>
                   <tr className="border-b border-[var(--c-border)] bg-[var(--c-surface-alt)] text-left text-xs uppercase tracking-wide text-[var(--c-text-50)]">
-                    <th className="w-[46%] px-4 py-3 font-medium">Товар</th>
+                    <th className="w-10 px-3 py-3">
+                      <input
+                        type="checkbox"
+                        className="w-4 h-4 accent-[var(--c-accent)] cursor-pointer"
+                        checked={filteredPhotoGroups.length > 0 && filteredPhotoGroups.every((g) => selectedGroupIds.includes(g.id))}
+                        onChange={() => {
+                          const allIds = filteredPhotoGroups.map((g) => g.id);
+                          const allSelected = allIds.every((id) => selectedGroupIds.includes(id));
+                          setSelectedGroupIds(
+                            allSelected
+                              ? selectedGroupIds.filter((id) => !allIds.includes(id))
+                              : Array.from(new Set([...selectedGroupIds, ...allIds]))
+                          );
+                        }}
+                      />
+                    </th>
+                    <th className="w-[46%] px-4 py-3 font-medium">Группа товаров</th>
                     <th className="w-[18%] px-4 py-3 font-medium">Цвет</th>
-                    <th className="w-[22%] px-4 py-3 font-medium">Соответствие</th>
-                    <th className="w-[14%] px-4 py-3 font-medium text-right">Товаров</th>
+                    <th className="w-[26%] px-4 py-3 font-medium">Наличие</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredPhotoGroups.map((g) => (
+                  {filteredPhotoGroups.map((g) => {
+                    const checkedG = selectedGroupIds.includes(g.id);
+                    return (
                     <Fragment key={g.id}>
-                      <tr className="transition hover:bg-[var(--c-surface-hover)]">
+                      <tr
+                        onClick={() => {
+                          setSelectedGroupIds((prev) =>
+                            checkedG ? prev.filter((id) => id !== g.id) : [...prev, g.id]
+                          );
+                        }}
+                        className={`transition cursor-pointer ${
+                          checkedG ? "bg-[var(--c-accent-bg)]" : "hover:bg-[var(--c-surface-hover)]"
+                        }`}
+                      >
+                        <td className="px-3 py-2.5" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            className="w-4 h-4 accent-[var(--c-accent)] cursor-pointer"
+                            checked={checkedG}
+                            onChange={() => {
+                              setSelectedGroupIds((prev) =>
+                                checkedG ? prev.filter((id) => id !== g.id) : [...prev, g.id]
+                              );
+                            }}
+                          />
+                        </td>
                         <td className="px-4 py-3">
                           <div className="truncate font-medium text-[var(--c-text)]" title={g.name}>
                             {g.name}
@@ -1133,22 +1289,8 @@ export function ProductsTab() {
                           <div className="flex items-center gap-1.5">
                             <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${g.product_count > 0 ? "bg-green-500" : "bg-red-500"}`} />
                             <span className={`text-xs ${g.product_count > 0 ? "text-green-500" : "text-red-500"}`}>
-                              {g.product_count > 0 ? "Есть товар" : "Нет товара"}
+                              {g.product_count > 0 ? `Есть товар (${g.product_count} шт.)` : `Нет товара (${g.product_count} шт.)`}
                             </span>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center justify-end gap-2">
-                            <span className="text-[var(--c-text-70)]">{g.product_count}</span>
-                            <button
-                              type="button"
-                              onClick={() => setPhotoGroupToDelete(g)}
-                              disabled={photoGroupDeleting === g.id}
-                              className="flex h-7 w-7 items-center justify-center rounded-lg border border-[var(--c-danger-border)] bg-[var(--c-danger-bg)] text-[var(--c-danger)] transition hover:opacity-90 disabled:opacity-40"
-                              title="Удалить группу целиком"
-                            >
-                              {photoGroupDeleting === g.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
-                            </button>
                           </div>
                         </td>
                       </tr>
@@ -1188,9 +1330,117 @@ export function ProductsTab() {
                         </td>
                       </tr>
                     </Fragment>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeSubTab === "margins" && (
+        <div>
+          <div className="mb-3 rounded-2xl border border-[var(--c-border-watermark)] bg-[var(--c-surface-alt)] p-3 backdrop-blur-xl">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-[var(--c-text-50)]">
+                Наценка задаёт цену продажи всех товаров категории от цены закупки — в процентах или фиксированной суммой. Цены пересчитываются автоматически, в том числе после импорта Excel.
+              </p>
+              <button
+                onClick={openMarginAdd}
+                className="flex h-9 items-center gap-2 rounded-xl border border-[var(--c-accent-border)] bg-[var(--c-accent-bg)] px-3 text-sm font-medium text-[var(--c-accent-soft)] transition hover:bg-[var(--c-accent-border)]"
+              >
+                <Plus size={18} />
+                Добавить наценку
+              </button>
+            </div>
+          </div>
+
+          {marginsLoading ? (
+            <div className="flex items-center justify-center py-16 text-[var(--c-text-50)]">
+              <Loader2 size={24} className="animate-spin mr-2" />
+              Загрузка...
+            </div>
+          ) : margins.length === 0 ? (
+            <div className="rounded-2xl border border-[var(--c-border)] bg-[var(--c-surface-alt)] px-4 py-16 text-center">
+              <Percent size={32} className="mx-auto mb-3 text-[var(--c-text-40)]" />
+              <p className="text-base font-medium text-[var(--c-text-70)]">Наценки пока не заданы</p>
+              <p className="mt-1 text-sm text-[var(--c-text-50)]">
+                Наценка привязывается к категории и пересчитывает цены продажи от закупки. Категории создаются при импорте Excel и остаются привязанными к наценке при перезаливке прайса.
+              </p>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-3">
+              {margins.map((m) => {
+                const catMissing = !categories.some((c) => c.id === m.target_category_id);
+                const hasGoods = !catMissing && (m.products_count ?? 0) > 0;
+                return (
+                <div
+                  key={m.id}
+                  className={`rounded-2xl border border-[var(--c-border)] bg-[var(--c-surface)] p-4 transition ${m.active ? "" : "opacity-60"}`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-[var(--c-accent-border)] bg-[var(--c-accent-bg)] text-[var(--c-accent-soft)]">
+                        {m.margin_type === "percent" ? <Percent size={20} /> : <Banknote size={20} />}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="truncate font-medium text-[var(--c-text)]">
+                          {m.target_category_name || `Категория #${m.target_category_id}`}
+                        </div>
+                        <div className="truncate text-xs text-[var(--c-text-50)]">
+                          Наценка {fmtMarginValue(m)}
+                        </div>
+                        <div className="mt-0.5 flex items-center gap-1.5">
+                          <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${hasGoods ? "bg-green-500" : "bg-red-500"}`} />
+                          <span className={`text-xs ${hasGoods ? "text-green-500" : "text-red-500"}`}>
+                            {catMissing
+                              ? "Категории нет"
+                              : hasGoods
+                              ? `Есть товар (${m.products_count} шт.)`
+                              : `Нет товара (${m.products_count ?? 0} шт.)`}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleToggleMargin(m)}
+                      disabled={marginDeleting === m.id}
+                      className={`relative mt-0.5 inline-flex h-6 w-11 shrink-0 items-center rounded-full transition disabled:opacity-50 ${
+                        m.active ? "bg-[var(--c-accent)]" : "bg-[var(--c-text-40)]/30"
+                      }`}
+                      title={m.active ? "Выключить" : "Включить"}
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                          m.active ? "translate-x-6" : "translate-x-1"
+                        }`}
+                      />
+                    </button>
+                  </div>
+                  <div className="mt-4 flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => openMarginEdit(m)}
+                      className="flex flex-1 h-11 items-center justify-center gap-2 rounded-xl border border-[var(--c-border)] text-sm font-medium text-[var(--c-text-70)] transition hover:bg-[var(--c-surface-hover)] hover:text-[var(--c-text)]"
+                    >
+                      <Pencil size={16} />
+                      Редактировать
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMarginToDelete(m)}
+                      disabled={marginDeleting === m.id}
+                      className="flex flex-1 h-11 items-center justify-center gap-2 rounded-xl border border-[var(--c-danger-border)] bg-[var(--c-danger-bg)] text-sm font-medium text-[var(--c-danger)] transition hover:bg-[var(--c-danger-border)] disabled:opacity-50"
+                    >
+                      {marginDeleting === m.id ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+                      Удалить
+                    </button>
+                  </div>
+                </div>
+                );
+              })}
             </div>
           )}
         </div>
@@ -1228,7 +1478,7 @@ export function ProductsTab() {
             </div>
           ) : promos.length === 0 ? (
             <div className="rounded-2xl border border-[var(--c-border)] bg-[var(--c-surface-alt)] px-4 py-16 text-center">
-              <Percent size={32} className="mx-auto mb-3 text-[var(--c-text-40)]" />
+              <Gift size={32} className="mx-auto mb-3 text-[var(--c-text-40)]" />
               <p className="text-base font-medium text-[var(--c-text-70)]">Акции пока не добавлены</p>
               <p className="mt-1 text-sm text-[var(--c-text-50)]">
                 Добавьте первый подарок — он появится в заказе покупателя при оформлении.
@@ -1491,6 +1741,151 @@ export function ProductsTab() {
         </div>
       )}
 
+      {marginModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--c-overlay)] backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-t-3xl border border-[var(--c-border)] bg-[var(--c-bg)] p-6 sm:rounded-3xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-xl font-semibold">{marginEditing ? "Редактировать наценку" : "Новая наценка"}</h3>
+              <button onClick={() => setMarginModal(false)} className="rounded-full p-2 text-[var(--c-text-50)] transition hover:bg-[var(--c-surface-hover)] hover:text-[var(--c-text)]">
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-4">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-[var(--c-text-70)]">Категория *</label>
+                <select
+                  value={marginForm.target_category_id || ""}
+                  onChange={(e) =>
+                    setMarginForm({ ...marginForm, target_category_id: e.target.value ? Number(e.target.value) : 0 })
+                  }
+                  className="h-11 w-full rounded-xl border border-[var(--c-border)] bg-[var(--c-surface)] px-3 text-base outline-none transition focus:border-[var(--c-accent-border)]"
+                >
+                  <option value="">{categories.length === 0 ? "Категорий пока нет" : "Выберите категорию"}</option>
+                  {categories.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+                {categories.length === 0 && (
+                  <p className="mt-1 text-xs text-[var(--c-danger)]">
+                    Категорий ещё нет — они создадутся автоматически при первом импорте Excel.
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-[var(--c-text-70)]">Тип наценки</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setMarginForm({ ...marginForm, margin_type: "percent" })}
+                    className={`flex h-11 items-center justify-center gap-2 rounded-xl border text-sm font-medium transition ${
+                      marginForm.margin_type === "percent"
+                        ? "border-[var(--c-accent-border)] bg-[var(--c-accent-bg)] text-[var(--c-accent-soft)]"
+                        : "border-[var(--c-border)] bg-[var(--c-surface)] text-[var(--c-text-70)] hover:bg-[var(--c-surface-hover)]"
+                    }`}
+                  >
+                    <Percent size={16} />
+                    Процент, %
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMarginForm({ ...marginForm, margin_type: "fixed" })}
+                    className={`flex h-11 items-center justify-center gap-2 rounded-xl border text-sm font-medium transition ${
+                      marginForm.margin_type === "fixed"
+                        ? "border-[var(--c-accent-border)] bg-[var(--c-accent-bg)] text-[var(--c-accent-soft)]"
+                        : "border-[var(--c-border)] bg-[var(--c-surface)] text-[var(--c-text-70)] hover:bg-[var(--c-surface-hover)]"
+                    }`}
+                  >
+                    <Banknote size={16} />
+                    Сумма, ₽
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-[var(--c-text-70)]">
+                  Наценка{marginForm.margin_type === "percent" ? ", %" : ", ₽"} *
+                </label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={marginForm.value}
+                    onChange={(e) => setMarginForm({ ...marginForm, value: e.target.value })}
+                    placeholder={marginForm.margin_type === "percent" ? "Например: 20" : "Например: 1000"}
+                    className="h-11 w-full rounded-xl border border-[var(--c-border)] bg-[var(--c-surface)] px-3 pr-12 text-base outline-none transition focus:border-[var(--c-accent-border)]"
+                  />
+                  <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-base text-[var(--c-text-50)]">
+                    {marginForm.margin_type === "percent" ? "%" : "₽"}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-[var(--c-text-50)]">
+                  {marginForm.margin_type === "percent"
+                    ? "Цена продажи = цена закупки × (1 + наценка / 100)"
+                    : "Цена продажи = цена закупки + наценка"}
+                </p>
+              </div>
+
+              {!marginEditing && margins.length > 0 && (
+                <p className="rounded-xl border border-[var(--c-border)] bg-[var(--c-surface-alt)] px-3 py-2 text-xs text-[var(--c-text-50)]">
+                  Для одной категории действует одна наценка. Если у категории уже есть правило — отредактируйте его.
+                </p>
+              )}
+            </div>
+
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                onClick={() => setMarginModal(false)}
+                className="h-10 rounded-xl border border-[var(--c-border)] px-4 text-sm font-medium text-[var(--c-text-50)] transition hover:bg-[var(--c-surface-hover)]"
+              >
+                Отмена
+              </button>
+              <button
+                onClick={handleSaveMargin}
+                disabled={marginSaving || categories.length === 0}
+                className="flex h-10 items-center gap-2 rounded-xl border border-[var(--c-accent-border)] bg-[var(--c-accent-bg)] px-4 text-sm font-medium text-[var(--c-accent-soft)] transition hover:bg-[var(--c-accent-border)] disabled:opacity-50"
+              >
+                {marginSaving && <Loader2 size={16} className="animate-spin" />}
+                {marginEditing ? "Сохранить" : "Добавить"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {marginToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--c-overlay)] backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-3xl border border-[var(--c-border)] bg-[var(--c-bg)] p-6">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-[var(--c-danger-border)] bg-[var(--c-danger-bg)] text-[var(--c-danger)]">
+              <Trash2 size={22} />
+            </div>
+            <h3 className="mt-4 text-lg font-semibold">Удалить наценку?</h3>
+            <p className="mt-1 text-sm text-[var(--c-text-50)]">
+              Удалить наценку {fmtMarginValue(marginToDelete)} для категории «{marginToDelete.target_category_name || `#${marginToDelete.target_category_id}`}»? Цены товаров категории будут пересчитаны. Это действие нельзя отменить.
+            </p>
+            <div className="mt-6 flex gap-2">
+              <button
+                onClick={() => setMarginToDelete(null)}
+                disabled={marginDeleting === marginToDelete.id}
+                className="h-11 flex-1 rounded-xl border border-[var(--c-border)] text-sm font-medium text-[var(--c-text-70)] transition hover:bg-[var(--c-surface-hover)]"
+              >
+                Отмена
+              </button>
+              <button
+                onClick={confirmDeleteMargin}
+                disabled={marginDeleting === marginToDelete.id}
+                className="flex h-11 flex-1 items-center justify-center gap-2 rounded-xl border border-[var(--c-danger-border)] bg-[var(--c-danger-bg)] text-sm font-medium text-[var(--c-danger)] transition hover:opacity-90 disabled:opacity-50"
+              >
+                {marginDeleting === marginToDelete.id ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+                Удалить
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {promoToDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--c-overlay)] backdrop-blur-sm">
           <div className="w-full max-w-sm rounded-3xl border border-[var(--c-border)] bg-[var(--c-bg)] p-6">
@@ -1516,68 +1911,6 @@ export function ProductsTab() {
               >
                 {promoDeleting === promoToDelete.id ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
                 Удалить
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {photoGroupToDelete && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[var(--c-overlay)]">
-          <div className="mx-4 w-full max-w-sm rounded-2xl border border-[var(--c-border)] bg-[var(--c-bg)] p-5 text-center shadow-2xl">
-            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-[var(--c-danger-border)] bg-[var(--c-danger-bg)] text-[var(--c-danger)]">
-              <Trash2 size={22} />
-            </div>
-            <h3 className="mt-4 text-base font-semibold text-[var(--c-text)]">Удалить фото-группу?</h3>
-            <p className="mt-1 text-sm text-[var(--c-text-50)]">
-              Точно удалить «{photoGroupToDelete.name}»{photoGroupToDelete.color ? ` / ${photoGroupToDelete.color}` : ""}? Фото будут отвязаны от всех товаров этого наименования и цвета. Это действие нельзя отменить.
-            </p>
-            <div className="mt-5 flex gap-2">
-              <button
-                onClick={() => setPhotoGroupToDelete(null)}
-                disabled={photoGroupDeleting === photoGroupToDelete.id}
-                className="flex-1 rounded-xl border border-[var(--c-border)] bg-[var(--c-surface)] py-2.5 text-sm font-medium text-[var(--c-text-70)] transition hover:bg-[var(--c-surface-hover)]"
-              >
-                Отмена
-              </button>
-              <button
-                onClick={confirmDeletePhotoGroup}
-                disabled={photoGroupDeleting === photoGroupToDelete.id}
-                className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-[var(--c-danger-border)] bg-[var(--c-danger-bg)] py-2.5 text-sm font-medium text-[var(--c-danger)] transition hover:opacity-90 disabled:opacity-50"
-              >
-                {photoGroupDeleting === photoGroupToDelete.id ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
-                Удалить
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {photoDeleteAll && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[var(--c-overlay)]">
-          <div className="mx-4 w-full max-w-sm rounded-2xl border border-[var(--c-border)] bg-[var(--c-bg)] p-5 text-center shadow-2xl">
-            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-[var(--c-danger-border)] bg-[var(--c-danger-bg)] text-[var(--c-danger)]">
-              <Trash2 size={22} />
-            </div>
-            <h3 className="mt-4 text-base font-semibold text-[var(--c-text)]">Удалить все фото-группы?</h3>
-            <p className="mt-1 text-sm text-[var(--c-text-50)]">
-              Будут удалены все записи ({photoGroups.length}) и привязанные к ним фото с диска. Это действие нельзя отменить.
-            </p>
-            <div className="mt-5 flex gap-2">
-              <button
-                onClick={() => setPhotoDeleteAll(false)}
-                disabled={photoDeletingAll}
-                className="flex-1 rounded-xl border border-[var(--c-border)] bg-[var(--c-surface)] py-2.5 text-sm font-medium text-[var(--c-text-70)] transition hover:bg-[var(--c-surface-hover)]"
-              >
-                Отмена
-              </button>
-              <button
-                onClick={confirmDeleteAllPhotoGroups}
-                disabled={photoDeletingAll}
-                className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-[var(--c-danger-border)] bg-[var(--c-danger-bg)] py-2.5 text-sm font-medium text-[var(--c-danger)] transition hover:opacity-90 disabled:opacity-50"
-              >
-                {photoDeletingAll ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
-                Удалить все
               </button>
             </div>
           </div>
@@ -1627,6 +1960,37 @@ export function ProductsTab() {
           </div>
         </div>
       )}
+
+      {activeSubTab === "photos" && selectedGroupIds.length > 0 && (
+        <div className="fixed inset-x-0 bottom-0 z-40 mx-auto max-w-7xl px-4 pb-4">
+          <div className="flex items-center justify-between rounded-2xl border border-[var(--c-accent-border)] bg-[var(--c-bg)] px-5 py-4 shadow-2xl backdrop-blur-xl">
+            <span className="text-sm text-[var(--c-text-50)]">
+              Выбрано: <strong className="text-[var(--c-text)]">{selectedGroupIds.length}</strong>
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleBulkDeleteGroups}
+                disabled={groupsDeleting}
+                className="flex h-10 shrink-0 items-center gap-2 rounded-xl border border-[var(--c-danger-border)] bg-[var(--c-danger-bg)] px-3 text-sm font-medium text-[var(--c-danger)] transition hover:bg-[var(--c-danger-border)] disabled:opacity-50 sm:px-4"
+                title="Удалить выбранные фото-группы"
+              >
+                {groupsDeleting ? <Loader2 size={18} className="animate-spin" /> : <Trash2 size={18} />}
+                <span className="hidden sm:inline">Удалить</span>
+              </button>
+              <button
+                onClick={() => setSelectedGroupIds([])}
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[var(--c-border)] text-[var(--c-text-50)] transition hover:bg-[var(--c-surface-hover)] hover:text-[var(--c-text)]"
+                title="Снять выделение"
+              >
+                <X size={16} />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Scroll to top */}
+      <ScrollToTopButton raised={hasFloatingPanel} />
 
       {/* Success notification */}
       {successMsg && (
@@ -1684,13 +2048,16 @@ export function ProductsTab() {
               </div>
 
               <div>
-                <label className="mb-1 block text-xs text-[var(--c-text-50)] uppercase tracking-wider">Цена продажи (₽) *</label>
+                <label className="mb-1 block text-xs text-[var(--c-text-50)] uppercase tracking-wider">Цена продажи (₽)</label>
                 <input
                   type="number"
                   className="w-full rounded-xl border border-[var(--c-border)] bg-[var(--c-surface)] px-3 py-2.5 text-base text-[var(--c-text)] outline-none"
                   value={form.price}
                   onChange={(e) => setForm({ ...form, price: e.target.value })}
                 />
+                <p className="mt-1 text-xs text-[var(--c-text-50)]">
+                  Если не заполнена, покупателю показывается цена закупки
+                </p>
               </div>
 
               <div>
@@ -1794,7 +2161,7 @@ export function ProductsTab() {
               </button>
               <button
                 onClick={handleSave}
-                disabled={saving || !form.name || !form.price || !form.category_id}
+                disabled={saving || !form.name || !form.category_id}
                 className="flex-1 rounded-2xl bg-[var(--c-accent)] px-4 py-3 font-semibold text-[var(--c-accent-fg)] transition hover:bg-[var(--c-accent-hover)] disabled:opacity-50"
               >
                 {saving ? "Сохранение..." : editing ? "Сохранить" : "Добавить"}

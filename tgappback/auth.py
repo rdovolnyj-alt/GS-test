@@ -1,9 +1,6 @@
 import os
 import hashlib
 import hmac
-import json
-import urllib.parse
-
 import httpx
 import google.auth.transport.requests
 import google.oauth2.id_token
@@ -30,7 +27,6 @@ ALGORITHM = "HS256"
 TOKEN_EXPIRE_DAYS = 30
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-VK_SERVICE_KEY = os.getenv("VK_SERVICE_KEY", "")
 
 # Admin credentials — ONLY from env, never stored in DB
 ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "admin@grandstore.com")
@@ -997,7 +993,6 @@ async def update_profile(
 def _validate_telegram_init_data(init_data: str) -> dict:
     if not TELEGRAM_BOT_TOKEN:
         # Dev mode: parse without validation
-        import json
         parsed = dict(item.split("=", 1) for item in init_data.split("&") if "=" in item)
         if "user" in parsed:
             return json.loads(parsed["user"])
@@ -1019,7 +1014,6 @@ def _validate_telegram_init_data(init_data: str) -> dict:
     if computed_hash != received_hash:
         raise HTTPException(401, "Invalid Telegram data signature")
 
-    import json
     user_data = {}
     if "user" in parsed:
         user_data = json.loads(parsed["user"])

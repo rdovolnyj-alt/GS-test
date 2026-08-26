@@ -104,7 +104,11 @@ class Product(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    price: Mapped[float] = mapped_column(Float, nullable=False)
+    # Цена продажи (с маржой). NULL/пусто — админ ещё не задал цену,
+    # тогда покупателю показывается цена закупки.
+    price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # Цена закупки (из Excel). Заполняется при импорте автоматически.
+    purchase_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     is_available: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     
     updated_at: Mapped[datetime] = mapped_column(
@@ -304,6 +308,33 @@ class Promo(Base):
     )
 
     target_product: Mapped[Optional["Product"]] = relationship("Product")
+    target_category: Mapped[Optional["Category"]] = relationship("Category")
+
+
+class Margin(Base):
+    """Наценка: правило ценообразования для категории товаров.
+    Цена продажи = цена закупки + value (fixed, ₽) или закупка × (1 + value/100).
+    Правила одной категории применяются последовательно по возрастанию id."""
+    __tablename__ = "margins"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+
+    # "percent" | "fixed"
+    margin_type: Mapped[str] = mapped_column(String(10), nullable=False, default="percent")
+    # Процент (0-100+) или фиксированная сумма в рублях
+    value: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+
+    target_category_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("categories.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
     target_category: Mapped[Optional["Category"]] = relationship("Category")
 
 

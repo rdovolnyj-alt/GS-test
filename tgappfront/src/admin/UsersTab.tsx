@@ -3,6 +3,7 @@ import { HelpCircle, Star, Activity } from "lucide-react";
 import { QuestionsTab } from "./QuestionsTab";
 import { ReviewsTab } from "./ReviewsTab";
 import { ActivityTab } from "./ActivityTab";
+import { ScrollToTopButton } from "../components/ScrollToTopButton";
 
 type UsersSubTab = "questions" | "reviews" | "activity";
 
@@ -59,6 +60,8 @@ export function UsersTab({ supportUnread, onSupportUnreadChange }: Props) {
       )}
       {active === "reviews" && <ReviewsTab />}
       {active === "activity" && <ActivityTab />}
+
+      <ScrollToTopButton />
     </div>
   );
 }

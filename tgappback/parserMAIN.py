@@ -563,9 +563,6 @@ def parse_watch_string(raw_text):
         rf"^SE\s+{size}\s+(.*?)$",
     ]
 
-    ultrawords = {"alpine", "trail", "ocean", "sport", "loop", "band", "bracelet", "milanese", "woven", "modern", "buckle", "strap", "solo"}
-    sizewords = {"xs", "s", "m", "l", "xl", "s/m", "m/l", "s-l", "m-l", "long", "short", "standard", "one size", "adjustable"}
-
     for pat in pats:
         m = re.search(pat, raw_text, re.IGNORECASE)
         if m:

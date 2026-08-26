@@ -200,8 +200,13 @@ body {
   --c-shimmer-base: var(--c-shimmer-bright);
 }
 
+.theme-toggle-thumb {
+  transition: left 0.45s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.3s ease;
+}
+
 @keyframes slide-up {
   from { transform: translateY(100%); }
   to { transform: translateY(0); }
 }
 .animate-slide-up { animation: slide-up 0.3s cubic-bezier(0.32, 0.72, 0, 1); }
+

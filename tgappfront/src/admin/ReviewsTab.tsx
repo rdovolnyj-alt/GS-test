@@ -100,7 +100,7 @@ export function ReviewsTab({ onCountChange }: Props) {
   }
 
   if (loading) {
-    return <p className="py-8 text-center text-sm text-[var(--c-text-50)]">Загрузка отзывов...</p>;
+    return <p className="py-8 text-center text-sm text-[var(--c-text-50)]">Загрузка отзывов...</p>
   }
 
   return (

@@ -22,7 +22,7 @@ export type Product = {
 export type ApiProduct = {
   id: number;
   name: string;
-  price: number;
+  price: number | null;
   purchase_price: number | null;
   is_available: boolean;
   quantity: number;

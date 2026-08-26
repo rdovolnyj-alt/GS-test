@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { User, LogOut, Pencil, Check, X, Bell } from "lucide-react";
+import { User, Pencil, Check, X } from "lucide-react";
 import type { AuthUser } from "../types/auth";
 import { PasswordInput } from "./PasswordInput";
 import { PhoneInput } from "./PhoneInput";
@@ -17,32 +17,22 @@ type Props = {
     phone?: string;
     password: string;
   }) => Promise<void>;
-  onLogout: () => void;
   onClose: () => void;
   onUpdateProfile: (field: string, value: string) => Promise<void>;
-  onShowMyOrders: () => void;
   onShowSetPassword: () => void;
   onShowAdmin: () => void;
   onShowCourier: () => void;
-  hasNotification?: boolean;
-  hasTradeInNotification?: boolean;
-  hasOrdersNotification?: boolean;
 };
 
 export function AuthModal({
   user,
   onLogin,
   onRegister,
-  onLogout,
   onClose,
   onUpdateProfile,
-  onShowMyOrders,
   onShowSetPassword,
   onShowAdmin,
   onShowCourier,
-  hasNotification,
-  hasTradeInNotification,
-  hasOrdersNotification,
 }: Props) {
   useScrollLock();
   const [mode, setMode] = useState<AuthMode>("login");
@@ -275,22 +265,6 @@ export function AuthModal({
               )}
             </div>
 
-            <button onClick={onShowMyOrders}
-              className={`mt-6 w-full rounded-2xl border py-3 text-sm font-medium transition ${
-                (hasNotification || hasTradeInNotification || hasOrdersNotification)
-                  ? "border-[var(--c-accent-border)] bg-[var(--c-accent-bg)] text-[var(--c-accent-soft)]"
-                  : "border-[var(--c-border)] bg-[var(--c-surface)] text-[var(--c-text-80)] hover:bg-[var(--c-surface-hover)]"
-              }`}>
-              <span className="flex items-center justify-center gap-2">
-                Мои заказы
-                {(hasNotification || hasTradeInNotification || hasOrdersNotification) && (
-                  <span className="flex h-4 w-4 items-center justify-center rounded-full bg-[#fbbf24] text-black shadow-md">
-                    <Bell size={10} />
-                  </span>
-                )}
-              </span>
-            </button>
-
             {!user.has_password && user.providers?.includes("local") === false && (
               <button onClick={onShowSetPassword}
                 className="mt-3 w-full rounded-2xl border border-[var(--c-accent-border)] bg-[var(--c-accent-bg)] py-3 text-sm font-medium text-[var(--c-accent-soft)] transition hover:bg-[var(--c-accent-border)]">
@@ -312,11 +286,6 @@ export function AuthModal({
               </button>
             )}
 
-            <button onClick={onLogout}
-              className="mt-3 w-full rounded-2xl border border-[var(--c-danger-border)] bg-[var(--c-danger-bg)] py-3 text-sm font-medium text-[var(--c-danger)] transition hover:bg-[var(--c-danger-border)] flex items-center justify-center gap-2">
-              <LogOut size={16} />
-              Выйти
-            </button>
           </>
         ) : (
           <>
